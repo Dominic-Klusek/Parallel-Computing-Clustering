@@ -54,7 +54,8 @@ int main(int argc, char *argv[]){
     // processor 0 must get data and add self loops, needs to be 1-D for easy data transfer to
     // other processors
     if(world_rank == 0){
-        float temp;
+        int node_1, node_2;
+        float weight;
         
         data = (float*)malloc(sizeof(float) * world_size);
         
@@ -64,12 +65,17 @@ int main(int argc, char *argv[]){
         // open file containing graph data
         infile = fopen("graph.txt","r");
         
-        i = 0;
-        while(fscanf(infile,"%f",&temp) != 0){
+        while(fscanf(infile,"%d %d %f",&node_1, &node_2, &weight) != 0){
             //printf("Temp val: %f\n", temp);
-            data[i] = temp;
-            //printf("Data[%i] value: %f\n", i, &data);
-            i++;
+            data[node_1 * sqrt_p + node_2] = weight;
+            data[node_2 * sqrt_p + node_1] = weight;
+            //printf("Data[%i] value: %f\n", node_1 * sqrt_p + node_2, data[node_1 * sqrt_p + node_2]);
+            //printf("Data[%i] value: %f\n", node_2 * sqrt_p + node_1, data[node_2 * sqrt_p + node_1]);
+        }
+        
+        // add self loops
+        for(i = 0; i < world_size; i+=(sqrt_p + 1)){
+            data[i] = 1.0;
         }
         
         // close file
@@ -77,11 +83,16 @@ int main(int argc, char *argv[]){
         
     }
     
+    if(world_rank == 0){
+        for(i = 0; i < world_size; i++){
+            printf("Data[%i] value: %f\n", i, data[i]);
+        }
+    }
+    
     // Scatter data to other processors, and copy data into second value
     MPI_Scatter(data, 1, MPI_FLOAT, &matrix_val, 1, MPI_FLOAT, 0, MPI_COMM_WORLD);
-    matrix_val_2 = matrix_val;
     
-    //printf("Processor %i: %f\n", world_rank, matrix_val);
+    printf("Processor %i: %f\n", world_rank, matrix_val);
     
     //free up dynamic memory
     if(world_rank == 0){
@@ -96,8 +107,6 @@ int main(int argc, char *argv[]){
     int size;
     MPI_Comm_size(row_comm, &size);
     //printf("Size of row: %i\n", size);
-    
-    
     
     
     // construct column comminication
@@ -146,8 +155,10 @@ int main(int argc, char *argv[]){
     //printf("World rank: %i\tColumn Number: %i\n", world_rank, column_number);
     
     // normalize matrix values before aligning
-    MPI_Allreduce(&matrix_val, &matrix_val, 1, MPI_FLOAT, MPI_SUM, column_comm);
-    MPI_Allreduce(&matrix_val_2, &matrix_val_2, 1, MPI_FLOAT, MPI_SUM, column_comm);
+    MPI_Allreduce(&matrix_val, &column_sum, 1, MPI_FLOAT, MPI_SUM, column_comm);
+    matrix_val /= column_sum;
+
+    matrix_val_2 = matrix_val;
     
     // align rows and columns
     //MPI_ANY_TAG
@@ -157,19 +168,69 @@ int main(int argc, char *argv[]){
     MPI_Comm_rank(column_comm, &column_rank);
     
     MPI_Request req;
-    printf("Processor %i sends data to left processor %i\n", row_rank, ((row_rank - row_number) + sqrt_p) % sqrt_p);
+    //printf("Processor %i sends data to left processor %i\n", row_rank, ((row_rank - row_number) + sqrt_p) % sqrt_p);
     MPI_Isend(&matrix_val, 1, MPI_FLOAT, ((row_rank - row_number) + sqrt_p) % sqrt_p, 0, row_comm, &req);
     MPI_Recv(&matrix_val, 1, MPI_FLOAT, MPI_ANY_SOURCE, 0, row_comm, MPI_STATUS_IGNORE);
-    printf("Processor %i receives data from right processor\n", world_rank);
+    //printf("Processor %i receives data from right processor\n", world_rank);
     MPI_Wait(&req, MPI_STATUS_IGNORE);
     
     
-    printf("Processor %i sends data to up processor %i\n", row_rank, ((column_rank - column_number) + sqrt_p) % sqrt_p);
-    MPI_Isend(&matrix_val, 1, MPI_FLOAT, ((column_rank - column_number) + sqrt_p) % sqrt_p, 1, column_comm, &req);
+    //printf("Processor %i sends data to up processor %i\n", row_rank, ((column_rank - column_number) + sqrt_p) % sqrt_p);
+    MPI_Isend(&matrix_val_2, 1, MPI_FLOAT, ((column_rank - column_number) + sqrt_p) % sqrt_p, 1, column_comm, &req);
     MPI_Recv(&matrix_val_2, 1, MPI_FLOAT, MPI_ANY_SOURCE, 1, column_comm, MPI_STATUS_IGNORE);
-    printf("Processor %i receives data from lower processor\n", world_rank);
+    //printf("Processor %i receives data from lower processor\n", world_rank);
     MPI_Wait(&req, MPI_STATUS_IGNORE);
     
+    //printf("Processor %i Initial Matrix Value 1: %f\n", world_rank, matrix_val);
+    //printf("Processor %i Initial Matrix Value 2: %f\n", world_rank, matrix_val_2);
     
+    // every processor performs these actions
+    while(difference >= 0.1){
+        printf("Look\n");
+        // reset column sum, and expanded val
+        column_sum = 0;
+        expanded_val = 0;
+    
+        // expansion
+        for(i = 0; i < sqrt_p; i++){
+            // non blocking send to the next row (cicular array)
+            MPI_Isend(&matrix_val_2, 1, MPI_FLOAT, (column_rank - 1 + sqrt_p) % sqrt_p, 1, column_comm, &req);
+            MPI_Recv(&matrix_val_2, 1, MPI_FLOAT, MPI_ANY_SOURCE, 1, column_comm, MPI_STATUS_IGNORE);
+            MPI_Wait(&req, MPI_STATUS_IGNORE);
+ 
+            //non blocking send to next column (cicular array)
+            MPI_Isend(&matrix_val, 1, MPI_FLOAT, (row_rank - 1 + sqrt_p) % sqrt_p, 0, row_comm, &req);
+            MPI_Recv(&matrix_val, 1, MPI_FLOAT, MPI_ANY_SOURCE, 0, row_comm, MPI_STATUS_IGNORE);
+            MPI_Wait(&req, MPI_STATUS_IGNORE);
+            
+            // 
+            expanded_val += (matrix_val * matrix_val_2);
+        }
+    
+        // inflation
+        inflated_val = pow(matrix_val, inflation_factor);
+        //printf("%f ^ %f %f\n",matrix_val, inflation_factor, inflated_val);
+        
+        // get sum of column, and store result in column_sum of each processor in column
+        MPI_Allreduce(&inflated_val, &column_sum, 1, MPI_FLOAT, MPI_SUM, column_comm);
+        
+        // normalize inflated matrix values
+        inflated_val /= column_sum;
+    
+        // calculate difference between expanded matrix, and inflated matrix
+        difference = abs(expanded_val - inflated_val);
+        
+        //store new values 
+        matrix_val = inflated_val;
+        matrix_val_2 = matrix_val;
+        //printf("Processor changed value %f\n", matrix_val);
+    
+        // get sum the total difference between expanded and inflated values
+        MPI_Allreduce(&difference, &difference, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+    }
+    
+    printf("Processor %i Final Matrix Value 1: %f\n", world_rank, matrix_val);
+    printf("Processor %i Final Matrix Value 2: %f\n", world_rank, matrix_val_2);
+    //printf("Processor %i Final Matrix Value: %i\n", world_rank, matrix_val);
     MPI_Finalize(); // close MPI environment
 }
