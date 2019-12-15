@@ -1,183 +1,301 @@
-/ global variables
+#include<stdio.h>
+#include<stdlib.h>
+#include<mpi.h>
+#include<math.h>
+
+// global variables
 int num_features;
+int world_size;
+int num_data;
+float **data;
  
 // function prototypes
-float calc_euclidean_distance(float[] coord1, float[] coord2);
-bool check_for_duplicates(List<int[]> found_coords, float[] coord);
-int[] find_min_feature_values(int[][] data);
-int[] find_max_feature_values(int[][] data);
- 
+float calc_euclidean_distance(float *coord1, float *coord2);
+int check_for_duplicates(float **found_coords, float coord[]);
+void find_min_feature_values(int *min_features);
+void find_max_feature_values(int *max_features);
+void mean_shift_clustering(float *new_coord, float window_size);
+
+
 int main(int argc, char **argv){
-    // variable to hold the data points
-    float data_points[num_data][num_features];
+    // seed random number generator
+    srand(time(0));
     
-    // variable to hold the number of centers to create
-    int num_centers = 10;
-    
-    // variable to hold the radius of the window
-    float radius = 10;
-    
-    // variable to hold the difference of the previous and current centroid coordinates
-    float difference = 1;
-    
-    // variable to hold the number of valid points in window
-    float valid_points;
-    
-    // float scaling factor
-    float scaling_factor = 1.5;
-    
-    // array to hold the sum of all varible points
-    float point_sums[num_features];
-    
-    // array to hold the centroid coordinates
-    float prev_coordinates[num_features];
-    float coordinates[num_features];
-    
-    // arrays to hold data about the data features
-    float min_array[num_features];
-    float max_array[num_features];
-    
-    // list to hold the final coordinates
-    List<int[]> final_coordinationes;
-    
-    
-    // initialize the MPI environment
+    // intialize MPI
     MPI_Init(&argc, &argv);
     
+    int world_rank;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size); //get total number of processors
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank); //get rank of processor
+    
+    int i = 0, j = 0, mod = 0;
+    float temp;
+    float *generated_coordinate;
     
     
-    // each processor reads data from a filelength
-    data_points = load_data("data_file_name");
+    // file handler
+    FILE *infile;
+
+    // open file containing graph data
+    infile = fopen("iris.data","r");
     
+    // get number of data points
+    fscanf(infile,"%d", &num_data);
     
+    // get number of data features
+    fscanf(infile,"%d", &num_features);
     
-    // only processor 0 calculates the centers
-    if(rank == 0){
-        // find minimum and max values for each data feature
-        min_array = find_min_feature_values(data_points);
-        max_array = find_max_feature_values(data_points);
-        
-        // create centroid coordinates, and send them to each processor
-        for(i=0; i < num_centers; i++){
-            for(j=0; j < num_features; j++){
-                coordinates[j] = rand() % max_array[j] + min_array[j];
-            }
-            send(coordinates, num_features, MPI_FLOAT, i, MPI_COMM_WORLD);
+    float *processor_coordinates = (float *)malloc(num_features * sizeof(float)); // coordinates that the processor will operate on
+    
+    // allocate  space for rows of data points
+    data = (float **)malloc(num_data * sizeof(float*));
+    
+    // load data set
+    while(fscanf(infile,"%f", &temp) != 0){
+        // allocate space for row of data
+        if(j == 0){
+            data[i] = (float *)malloc(num_features * sizeof(float));
         }
-    } else{
-        // receive initial center coordinates from processor 0
-        recv(coordinates, num_features, MPI_FLOAT, 0, MPI_COMM_WORLD);
+        
+        // store retrieved data points
+        data[i][j] = temp;
+        j++;
+        
+        // when all data features are loaded for a single data point, reset variables
+        if(j == num_features){
+            j = 0;
+            i++;
+        }
+    }
+    
+    // close file
+    fclose(infile);
+    
+    
+    if(world_rank == 0){
+        // create array to hold generated coordinates
+        generated_coordinate = (float *)malloc(world_size * num_features * sizeof(float)); //make array to hold coordinates in row major fashion
+        
+        // get minimum of data points
+        int *min_features = (int *)malloc(num_features * sizeof(int));
+        for(i = 0; i < num_features; i++){
+            min_features[i] = 0;
+        }
+        find_min_feature_values(min_features);
+
+        // get maximum of data points
+        int *max_features = (int *)malloc(num_features * sizeof(int));
+        for(i = 0; i < num_features; i++){
+            max_features[i] = 0;
+        }
+        find_max_feature_values(max_features);
+
+        
+        // j will be used to keep track of the feature that we are working on
+        j = 0;
+        // generate random coordinates, and then scatter coordinates to processors
+        for(i = 0; i <= world_size * num_features; i++){
+            generated_coordinate[i] = rand() % max_features[j] + min_features[j];
+            if(j == num_features){
+                j = 0;
+            }
+        }
+        
+        free(min_features);
+        free(max_features);
     }
     
     
+    // scatter coordinates to other processors
+    MPI_Scatter(generated_coordinate, num_features, MPI_FLOAT, processor_coordinates, num_features, MPI_FLOAT, 0, MPI_COMM_WORLD);
     
-    // while point difference change is larger than alpha
-    while(difference > alpha){
-        valid_points = 0;
     
-        // go through all the points and sum up points withing the radius
-        for(i = 0; i < num_data; i++){
-            difference = calc_euclidean_distance(data_points[i], coordinates);
+    //perform Mean Shift CLustering
+    mean_shift_clustering(processor_coordinates, 10.0);
+    
+    
+    // other processors send final coordinates to root processor
+    if(world_rank == 0){
+        // some variables to hold data before processing
+        int z, valid_coords = 0;
+        float **unique_centroids = (float **)malloc(world_size * sizeof(float *));
         
-            if(difference <= radius){
-                valid_points += 1;
-                point_sums += data_points[i];
+        // allocate memory to contain a max of world_size uniqye centroids
+        for(i = 0; i < world_size; i++){
+                unique_centroids[i] = (float *)malloc(num_features * sizeof(float));
+        }
+        
+        // place the centroid found by processor 0
+        for(i = 0; i < num_features; i++){
+            unique_centroids[0][i] = processor_coordinates[i];
+        }
+        valid_coords++;
+        
+        
+        // retrieve coordinates from other processors
+        for(i = 1; i < world_size; i++){
+            // recieve coordinate
+            MPI_Recv(processor_coordinates, num_features, MPI_FLOAT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            //printf("Processor 0 received coordinates from Processor %i\n", i);
+            for(j = 0; j < num_features; j++){
+                    printf("%f ", processor_coordinates[j]);
+            }
+            printf("\n");
+            // check to see it this is a unique coordinate, store if unique
+            if(check_for_duplicates(unique_centroids, processor_coordinates) == 0){
+                for(j = 0; j < num_features; j++){
+                    unique_centroids[valid_coords][j] = processor_coordinates[j];
+                }
+                valid_coords++;
             }
         }
         
-        // if there were no valid points found, increase radius, and try again
-        // else change store the current coordinates, recalculate the coordinates using the sum of the points, 
-            // and then calculate difference to see if convergence is achieved
-        if(valid_points == 0){
-            radius *= scaling_factor;
-            difference = 1;
-        } else{
-            prev_coordinates = coordinates;
-            coordinates = point_sums/valid_points;
-            difference = coordinates - prev_coordinates;
-        }
-    
-    }
-    
-    
-    
-    // rank 0 collects final centers 
-    if(rank == 0){
-        // append the coordinates at processor 0 so that the list is not empty
-        final_coordinationes.append(coordinates);
+        // print the total number of unique centroids
+        printf("Number of unique centroids: %i\n", valid_coords);
         
-        // get center points, and store in a linked list
-        for(i = 1; i < p; i++){
-            recv(coordinates, num_features, MPI_FLOAT, i, MPI_COMM_WORLD);
-        
-            // check if coordinates are already in the list
-            if(check_for_duplicates(final_coordinationes, coordinates)){
-                final_coordinationes.append(coordinates);
+        // print the unique centroids and free up dynamic memory
+        for(i = 0; i < valid_coords; i++){
+            printf("UNique Centroids %i: ", i);
+            for(j = 0; j < num_features; j++){
+                printf("%f ", unique_centroids[i][j]);
             }
+            printf("\n");
+            free(unique_centroids[i]);
         }
-    
-        // output final cetners
-    
+        free(unique_centroids);
+    } else {
+        MPI_Send(processor_coordinates, num_features, MPI_FLOAT, 0, 0, MPI_COMM_WORLD);
+        //printf("Processor %i sent coordinates to Processor 0\n", world_rank);
     }
     
     
+    // free dynamically allocatted memory
+    for(i = 0; i < num_data; i++){
+        free(data[i]);
+    }
     
-    //finalize the MPI session
+    free(processor_coordinates);
+    
+    if(world_rank == 0){
+        free(generated_coordinate);
+    }
+    
+    
+    // finalize mpi
     MPI_Finalize();
+    return 0;
 }
- 
-float calc_euclidean_distance(float[] coord1, float[] coord2){
+
+// function to calculate the euclidean distance between two points
+float calc_euclidean_distance(float *coord1, float *coord2){
     // function to calculate the euclidean distance
     // distance variable 
     float distance = 0.0;
     
     // for each data feature calculate the 
-    for(int i = 0; i < (sizeof(coord1)/sizeof(*coord1); i++){
-        distance += (coord1[i] - coord2[i]) ** 2;
+    for(int i = 0; i < num_features; i++){
+        distance += pow(coord1[i] - coord2[i], 2);
     }
     
     // return the total distance
     return distance;
 }
- 
-bool check_for_duplicates(List<int[]> found_coords, float[] coord){
-    // function uses an iterator to go through entire list, and checks if the list contains the coordinate in itself
-    for (std::list<int>::iterator it=found_coords.begin(); it != found_coords.end(); ++it){
-        // if a match is found, return false
-        if(*it == coord){
-            return false;
+
+// function to check if coord is already in found_coords 
+int check_for_duplicates(float **found_coords, float coord[]){
+    int i, j, similar;
+    
+    // assume that the coordinates are the same, then look for differences
+    for(i = 0; i < world_size; i++){
+        similar = 1;
+        for(j = 0; j < num_features; j++){
+            similar = similar & (found_coords[i][j] == coord[j]);
+            //printf("%f\n", found_coords[i][j]);
+        }
+        if(similar == 1){
+            return 1;
         }
     }
     
-    // if no match is found, return true to add the element to the list
-    return true;
+    
+    // if no match is found, return 0 to add the element to the list
+    return 0;
 }
- 
-int[] find_min_feature_values(int[][] data){
+
+
+// find minimum features for data
+void find_min_feature_values(int *min_features){
     // array to store minimum values for each data feature
-    int min[(sizeof(data[0])/sizeof(*data[0])] = 0;
+    int i, j;
     
     // go through each point and data feature
-    for(i = 0; i < (sizeof(data)/sizeof(*data); i++){
+    for(i = 0; i < num_data; i++){
         for(j = 0; j < num_features; j++){
             // if a smaller value is found for the data feauture, store in min array
-            if(data[i][j] < min[j]){
-                min[j] = data[i][j];
+            if(data[i][j] < min_features[j]){
+                min_features[j] = floor(data[i][j]);
             }
         }
     }
 }
- 
-int[] find_max_feature_values(int[][] data){
-    // array to store maximum values for each data feature
-    int max[(sizeof(data[0])/sizeof(*data[0])] = 0;
+
+// find maximum features for data
+void find_max_feature_values(int *max_features){
+    int i, j;
     
     // go through each point and data feature
-    for(i = 0; i < (sizeof(data)/sizeof(*data); i++){
+    for(i = 0; i < num_data; i++){
         for(j = 0; j < num_features; j++){
             // if a smaller value is found for the data feauture, store in min array
-            if(data[i][j] > max[j]){
-                max[j] = data[i][j];
+            if(data[i][j] > max_features[j]){
+                max_features[j] = ceil(data[i][j]);
             }
         }
     }
+}
+
+// function to perform mean shift clustering
+void mean_shift_clustering(float *new_coord, float window_size){
+    int i, j, valid_points= 100;
+    float *mean_coord = (float *)malloc(num_features * sizeof(float));
+    float *previous_coord = (float *)malloc(num_features * sizeof(float));
+    
+    
+    do{
+        
+        valid_points = 0;
+        // set value of mean coord to 0
+        for(i = 0; i < num_features; i++){
+            mean_coord[i] = 0;
+        }
+        
+        // find valid points
+        for(i = 0; i < num_data; i++){
+            //printf("# Valid Points: %d\n", valid_points);
+            if(calc_euclidean_distance(new_coord, data[i]) <= window_size){
+                valid_points++;
+                for(j = 0; j < num_features; j++){
+                    mean_coord[j] += data[i][j];
+                }
+            }
+        }
+        
+        //printf("# Valid Points: %d\n", valid_points);
+        if(valid_points == 0){
+            window_size *= 2;
+        }
+        else{
+            // calculate mean coordinate, and store in new_coord
+            for(i = 0; i < num_features; i++){
+                previous_coord[i] = new_coord[i];
+                new_coord[i] = mean_coord[i] / valid_points;
+            }
+        }
+        
+    } while(calc_euclidean_distance(previous_coord, new_coord) > 0.01);
+    //printf("Finished Algorithm\n");
+    
+    
+    free(mean_coord);
+    free(previous_coord);
+}
