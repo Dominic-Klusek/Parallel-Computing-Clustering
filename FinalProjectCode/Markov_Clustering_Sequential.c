@@ -119,18 +119,13 @@ int main(int argc, char *argv[]){
                 expanded_val[i][j] = 0.0;
                 for(z = 0; z < number_of_nodes; z++){
                     expanded_val[i][j] += (data[i][z] * data[z][j]);
+                    if(i == 0){
+                        printf("Val 1 %f\n", data[i][z]);
+                        printf("Val 2 %f\n", data[z][j]);
+                    }
                 }
                 inflated_val[i][j] = pow(expanded_val[i][j], inflation_factor);
             }
-        }
-        
-        printf("Expanded Matrix\n");
-        for(i = 0; i < number_of_nodes; i++){
-            for(j = 0; j < number_of_nodes; j++){
-                //printf("Final Data[%i][%i] value: %f\n", i, j, data[i][j]);
-                printf("%f ", expanded_val[i][j]);
-            }
-            printf("\n");
         }
         
         //perform second step of inflation operation
