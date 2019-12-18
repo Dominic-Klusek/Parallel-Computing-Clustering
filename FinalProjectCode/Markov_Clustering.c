@@ -6,6 +6,8 @@
 
 int main(int argc, char *argv[]){
     MPI_Init(&argc, &argv); //initialize MPI environment
+    
+    double start_time = MPI_Wtime();
         
     // loop counter variables
     int i, j;
@@ -147,7 +149,7 @@ int main(int argc, char *argv[]){
     MPI_Allreduce(&matrix_val, &column_sum, 1, MPI_FLOAT, MPI_SUM, column_comm);
     matrix_val = matrix_val / column_sum;
     
-//     printf("World rank: %i Column Sum: %f\n", world_rank, column_sum);
+    // printf("World rank: %i Column Sum: %f\n", world_rank, column_sum);
     
     // copy matrix val to second matrix variable
     matrix_val_2 = matrix_val;
@@ -156,44 +158,49 @@ int main(int argc, char *argv[]){
     //printf("World rank: %i Matrix Val 2: %f\n", world_rank, matrix_val_2);
     
     MPI_Gather(&matrix_val, 1, MPI_FLOAT, data, 1, MPI_FLOAT, 0, MPI_COMM_WORLD);
-        if(world_rank == 0){
-            printf("Markov Matrix\n");
-            for(i = 0; i < sqrt_p; i++){
-                for(j = 0; j < sqrt_p; j++){
-                    //printf("Final Data[%i][%i] value: %f\n", i, j, data[i][j]);
-                    printf("%f ", data[sqrt_p * i + j]);
-                }
-            printf("\n");
+    if(world_rank == 0){
+        printf("Markov Matrix\n");
+        for(i = 0; i < sqrt_p; i++){
+            for(j = 0; j < sqrt_p; j++){
+                //printf("Final Data[%i][%i] value: %f\n", i, j, data[i][j]);
+                printf("%f ", data[sqrt_p * i + j]);
             }
+        printf("\n");
         }
+    }
     
     // get row and column ranks
     int row_rank, column_rank;
     MPI_Comm_rank(row_comm, &row_rank);
     MPI_Comm_rank(column_comm, &column_rank);
-//     printf("Processor %d Column Rank %d\n", world_rank, column_rank);
-//     printf("Processor %d Row Rank %d\n", world_rank, row_rank);
+    // printf("Processor %d Column Rank %d\n", world_rank, column_rank);
+    // printf("Processor %d Row Rank %d\n", world_rank, row_rank);
     
     // align rows and columns
-    MPI_Request req;
+    MPI_Request req1, req2;
+
+    // every processor performs these actions
+    while(difference > 0.000001){
+        // reset column sum, and expanded val
+        column_sum = 0;
+        expanded_val = 0;
+        
+        if(row_number != 0){
+            //matrix_val = row_rank;
+            MPI_Isend(&matrix_val, 1, MPI_FLOAT, ((row_rank - row_number) + sqrt_p) % sqrt_p, 0, row_comm, &req1);
+            MPI_Recv(&matrix_val, 1, MPI_FLOAT, (row_rank + row_number) % sqrt_p, 0, row_comm, MPI_STATUS_IGNORE);
+            MPI_Wait(&req1, MPI_STATUS_IGNORE);
+        }
     
+        if(column_number != 0){
+            //matrix_val_2 = column_rank;
+            MPI_Isend(&matrix_val_2, 1, MPI_FLOAT, ((column_rank - column_number) + sqrt_p) % sqrt_p, 1, column_comm, &req2);
+            MPI_Recv(&matrix_val_2, 1, MPI_FLOAT, (column_rank + column_number) % sqrt_p, 1, column_comm, MPI_STATUS_IGNORE);
+            MPI_Wait(&req2, MPI_STATUS_IGNORE);
+        }
     
-//     printf("Row align Processor %d to Processor: %d\n", world_rank, ((row_rank - row_number) + sqrt_p) % sqrt_p);
-    if(row_number != 0){
-        //matrix_val = row_rank;
-        MPI_Isend(&matrix_val, 1, MPI_FLOAT, ((row_rank - row_number) + sqrt_p) % sqrt_p, row_number, row_comm, &req);
-        MPI_Recv(&matrix_val, 1, MPI_FLOAT, (row_rank + row_number) % sqrt_p, row_number, row_comm, MPI_STATUS_IGNORE);
-        MPI_Wait(&req, MPI_STATUS_IGNORE);
-    }
-    
-    if(column_number != 0){
-        //matrix_val_2 = column_rank;
-        MPI_Isend(&matrix_val_2, 1, MPI_FLOAT, ((column_rank - column_number) + sqrt_p) % sqrt_p, column_number, column_comm, &req);
-        MPI_Recv(&matrix_val_2, 1, MPI_FLOAT, (column_rank + column_number) % sqrt_p, column_number, column_comm, MPI_STATUS_IGNORE);
-        MPI_Wait(&req, MPI_STATUS_IGNORE);
-    }
-    
-    MPI_Gather(&matrix_val, 1, MPI_FLOAT, data, 1, MPI_FLOAT, 0, MPI_COMM_WORLD);
+        
+        MPI_Gather(&matrix_val, 1, MPI_FLOAT, data, 1, MPI_FLOAT, 0, MPI_COMM_WORLD);
         if(world_rank == 0){
             printf("Aligned Row Matrix\n");
             for(i = 0; i < sqrt_p; i++){
@@ -205,7 +212,7 @@ int main(int argc, char *argv[]){
             }
         }
     
-    MPI_Gather(&matrix_val_2, 1, MPI_FLOAT, data, 1, MPI_FLOAT, 0, MPI_COMM_WORLD);
+        MPI_Gather(&matrix_val_2, 1, MPI_FLOAT, data, 1, MPI_FLOAT, 0, MPI_COMM_WORLD);
         if(world_rank == 0){
             printf("Aligned Column Matrix\n");
             for(i = 0; i < sqrt_p; i++){
@@ -216,46 +223,40 @@ int main(int argc, char *argv[]){
             printf("\n");
             }
         }
-
-    // every processor performs these actions
-    while(difference > 0.000001){
-        // reset column sum, and expanded val
-        column_sum = 0;
-        expanded_val = 0;
-    
+        
+        
         // perform expansion operations
         for(i = 0; i < sqrt_p; i++){
             // sum up product of matrix values
             expanded_val += (matrix_val * matrix_val_2);
             
-            if(world_rank == 0){
-                printf("Val 1 %f\n", matrix_val);
-                printf("Val 2 %f\n", matrix_val_2);
-            }
             //non blocking send to next column (cicular array)
-            MPI_Isend(&matrix_val, 1, MPI_FLOAT, (row_rank - 1 + sqrt_p) % sqrt_p, row_number, row_comm, &req);
-            MPI_Recv(&matrix_val, 1, MPI_FLOAT, (row_rank + 1) % sqrt_p, row_number, row_comm, MPI_STATUS_IGNORE);
-            MPI_Wait(&req, MPI_STATUS_IGNORE);
+            MPI_Isend(&matrix_val, 1, MPI_FLOAT, (row_rank - 1 + sqrt_p) % sqrt_p, 0, row_comm, &req1);
+            MPI_Recv(&matrix_val, 1, MPI_FLOAT, (row_rank + 1) % sqrt_p, 0, row_comm, MPI_STATUS_IGNORE);
+            
             
             // non blocking send to the next row (cicular array)
-            MPI_Isend(&matrix_val_2, 1, MPI_FLOAT, (column_rank - 1 + sqrt_p) % sqrt_p, column_number, column_comm, &req);
-            MPI_Recv(&matrix_val_2, 1, MPI_FLOAT, (column_rank + 1) % sqrt_p, column_number, column_comm, MPI_STATUS_IGNORE);
-            MPI_Wait(&req, MPI_STATUS_IGNORE);
-            
+            MPI_Isend(&matrix_val_2, 1, MPI_FLOAT, (column_rank - 1 + sqrt_p) % sqrt_p, 1, column_comm, &req2);
+            MPI_Recv(&matrix_val_2, 1, MPI_FLOAT, (column_rank + 1) % sqrt_p, 1, column_comm, MPI_STATUS_IGNORE);
+            MPI_Wait(&req1, MPI_STATUS_IGNORE);
+            MPI_Wait(&req2, MPI_STATUS_IGNORE);
         }
         
-        MPI_Gather(&expanded_val, 1, MPI_FLOAT, data, world_size, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+        
+        MPI_Gather(&expanded_val, 1, MPI_FLOAT, data, 1, MPI_FLOAT, 0, MPI_COMM_WORLD);
         if(world_rank == 0){
             printf("Expanded Matrix\n");
             for(i = 0; i < sqrt_p; i++){
                 for(j = 0; j < sqrt_p; j++){
                     //printf("Final Data[%i][%i] value: %f\n", i, j, data[i][j]);
+//                     printf("%d ", sqrt_p * i + j);
                     printf("%f ", data[sqrt_p * i + j]);
                 }
             printf("\n");
             }
         }
-    
+        
         // perform first inflation step
         inflated_val = pow(expanded_val, inflation_factor);
         
@@ -277,7 +278,7 @@ int main(int argc, char *argv[]){
         MPI_Allreduce(&difference, &difference, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
         
         
-        MPI_Gather(&matrix_val, 1, MPI_FLOAT, data, world_size, MPI_FLOAT, 0, MPI_COMM_WORLD);
+        MPI_Gather(&matrix_val, 1, MPI_FLOAT, data, 1, MPI_FLOAT, 0, MPI_COMM_WORLD);
         if(world_rank == 0){
             printf("Next iteration\n");
             for(i = 0; i < sqrt_p; i++){
@@ -288,21 +289,21 @@ int main(int argc, char *argv[]){
             printf("\n");
             }
         }
-        break;
+
     }
     
     MPI_Gather(&matrix_val, 1, MPI_FLOAT, data, 1, MPI_FLOAT, 0, MPI_COMM_WORLD);
-        if(world_rank == 0){
-            printf("Final Matrix\n");
-            for(i = 0; i < sqrt_p; i++){
-                for(j = 0; j < sqrt_p; j++){
-                    //printf("Final Data[%i][%i] value: %f\n", i, j, data[i][j]);
-                    printf("%f ", data[sqrt_p * i + j]);
-                }
-            printf("\n");
+    if(world_rank == 0){
+        printf("Final Matrix\n");
+        for(i = 0; i < sqrt_p; i++){
+            for(j = 0; j < sqrt_p; j++){
+                //printf("Final Data[%i][%i] value: %f\n", i, j, data[i][j]);
+                printf("%f ", data[sqrt_p * i + j]);
             }
+        printf("\n");
         }
-    
+    }
+
     //free up dynamic memory
     if(world_rank == 0){
         free(data);
@@ -310,5 +311,10 @@ int main(int argc, char *argv[]){
     //printf("Processor %i Final Matrix Value 1: %f\n", world_rank, matrix_val);
     //printf("Processor %i Final Matrix Value 2: %f\n", world_rank, matrix_val_2);
     //printf("Processor %i Final Matrix Value: %i\n", world_rank, matrix_val);
+    
+    double end_time = MPI_Wtime();
+    if(world_rank == 0){
+        printf("Time difference: %f\n", end_time - start_time);
+    }
     MPI_Finalize(); // close MPI environment
 }

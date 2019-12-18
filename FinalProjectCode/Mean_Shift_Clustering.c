@@ -24,6 +24,9 @@ int main(int argc, char **argv){
     // intialize MPI
     MPI_Init(&argc, &argv);
     
+    //get start time of program
+    double start_time = MPI_Wtime();
+    
     int world_rank;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size); //get total number of processors
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank); //get rank of processor
@@ -181,8 +184,11 @@ int main(int argc, char **argv){
     }
     
     
-    // finalize mpi
-    MPI_Finalize();
+    double end_time = MPI_Wtime();
+    if(world_rank == 0){
+        printf("Time difference: %f\n", end_time - start_time);
+    }
+    MPI_Finalize(); // close MPI environment
     return 0;
 }
 

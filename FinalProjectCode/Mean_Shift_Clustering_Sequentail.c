@@ -21,6 +21,12 @@ int main(int argc, char **argv){
     // seed random number generator
     srand(time(0));
     
+    // intialize MPI
+    MPI_Init(&argc, &argv);
+    
+    //get start time of program
+    double start_time = MPI_Wtime();
+    
     int i = 0, j = 0, mod = 0;
     float temp;
     float **generated_coordinate;
@@ -123,7 +129,7 @@ int main(int argc, char **argv){
     }
     valid_coords++;
         
-        
+    printf("\nFound Clusters\n");
     // retrieve coordinates from other processors
     for(i = 1; i < world_size; i++){
         //printf("Processor 0 received coordinates from Processor %i\n", i);
@@ -142,7 +148,7 @@ int main(int argc, char **argv){
     }
         
     // print the total number of unique centroids
-    printf("Number of unique centroids: %i\n", valid_coords);
+    printf("\n\nNumber of unique centroids: %i\n", valid_coords);
         
     // print the unique centroids and free up dynamic memory
     for(i = 0; i < valid_coords; i++){
@@ -164,6 +170,11 @@ int main(int argc, char **argv){
     for(i = 0; i < world_size; i++){
         free(generated_coordinate[i]);
     }
+    
+    double end_time = MPI_Wtime();
+    printf("\nTime difference: %f\n", end_time - start_time);
+    MPI_Finalize(); // close MPI environment
+    
     return 0;
 }
 
