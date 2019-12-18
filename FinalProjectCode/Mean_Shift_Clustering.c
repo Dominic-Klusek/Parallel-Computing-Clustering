@@ -2,6 +2,9 @@
 #include<stdlib.h>
 #include<mpi.h>
 #include<math.h>
+// to compile
+// mpicc -o Mean_Shift Mean_Shift_Clustering.c -lm
+
 
 // global variables
 int num_features;
@@ -136,12 +139,13 @@ int main(int argc, char **argv){
         
         
         // retrieve coordinates from other processors
+        printf("Found Coordinates\n");
         for(i = 1; i < world_size; i++){
             // recieve coordinate
             MPI_Recv(processor_coordinates, num_features, MPI_FLOAT, i, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             //printf("Processor 0 received coordinates from Processor %i\n", i);
             for(j = 0; j < num_features; j++){
-                    printf("%f ", processor_coordinates[j]);
+                    printf("%8f ", processor_coordinates[j]);
             }
             printf("\n");
             // check to see it this is a unique coordinate, store if unique
@@ -152,24 +156,26 @@ int main(int argc, char **argv){
                 valid_coords++;
             }
         }
+        printf("\n\n");
         
         // print the total number of unique centroids
         printf("Number of unique centroids: %i\n", valid_coords);
         
         // print the unique centroids and free up dynamic memory
         for(i = 0; i < valid_coords; i++){
-            printf("UNique Centroids %i: ", i);
+            printf("Unique Centroids %i: ", i);
             for(j = 0; j < num_features; j++){
-                printf("%f ", unique_centroids[i][j]);
+                printf("%8f ", unique_centroids[i][j]);
             }
             printf("\n");
             free(unique_centroids[i]);
         }
         free(unique_centroids);
+        printf("\n");
     } else {
         MPI_Send(processor_coordinates, num_features, MPI_FLOAT, 0, 0, MPI_COMM_WORLD);
-        //printf("Processor %i sent coordinates to Processor 0\n", world_rank);
     }
+    
     
     
     // free dynamically allocatted memory
@@ -186,7 +192,7 @@ int main(int argc, char **argv){
     
     double end_time = MPI_Wtime();
     if(world_rank == 0){
-        printf("Time difference: %f\n", end_time - start_time);
+        printf("Time difference: %8f\n", end_time - start_time);
     }
     MPI_Finalize(); // close MPI environment
     return 0;

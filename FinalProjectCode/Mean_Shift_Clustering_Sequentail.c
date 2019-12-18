@@ -2,10 +2,12 @@
 #include<stdlib.h>
 #include<mpi.h>
 #include<math.h>
+// to compile
+// mpicc -o Mean_Shift_Seq Mean_Shift_Clustering_Sequentail.c -lm
 
 // global variables
 int num_features;
-int world_size = 5;
+int world_size = 8;
 int num_data;
 float **data;
  
@@ -70,7 +72,7 @@ int main(int argc, char **argv){
     
     
     // create array to hold generated coordinates
-    generated_coordinate = (float **)malloc(world_size * num_features * sizeof(float)); //make array to hold coordinates in row major fashion
+    generated_coordinate = (float **)malloc(world_size * num_features * sizeof(float)); //make array to hold coordinates in
         
     // get minimum of data points
     int *min_features = (int *)malloc(num_features * sizeof(int));
@@ -105,13 +107,11 @@ int main(int argc, char **argv){
     // free memory of min and max features
     free(min_features);
     free(max_features);
-    printf("Created Coordinates\n");
     
     for(i = 0; i < world_size; i++){
         //perform Mean Shift CLustering
         mean_shift_clustering(generated_coordinate[i], 10.0);
     }
-    printf("Completed Clustering\n");
     
     
     // some variables to hold data before processing

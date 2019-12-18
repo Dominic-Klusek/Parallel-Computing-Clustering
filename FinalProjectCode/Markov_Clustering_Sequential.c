@@ -3,7 +3,9 @@
 #include <mpi.h>
 #include <math.h>
 #include <time.h>
-//mpirun -np 8 --use-hwthread-cpus ./parrallelSum
+// to compile 
+// mpicc -o Markov_Seq Markov_Clustering_Sequential.c -lm
+
 
 int main(int argc, char *argv[]){
     MPI_Init(&argc, &argv); //initialize MPI environment
@@ -35,9 +37,8 @@ int main(int argc, char *argv[]){
     // data array to hold intiial markov matrix (only processor 0 uses this)
     float **data;
 
-    
-    // processor 0 must get data and add self loops, needs to be 1-D for easy data transfer to
-    // other processors
+    ////////////////////////////    Get Data    ////////////////////////////////////////
+    // processor 0 must get data and add self loops
     int node_1, node_2;
     float weight;
         
@@ -56,6 +57,12 @@ int main(int argc, char *argv[]){
         data[i] = (float *)malloc(number_of_nodes * sizeof(float));
     }
     
+    for(i = 0; i < number_of_nodes; i++){
+        for(j = 0; j < number_of_nodes; j++){
+            data[i][j] = 0;
+        }
+    }
+    
     // get node weights
     while(fscanf(infile,"%d %d %f",&node_1, &node_2, &weight) != 0){
         data[node_1][node_2] = weight;
@@ -69,8 +76,8 @@ int main(int argc, char *argv[]){
         
     // close file
     fclose(infile);
-    printf("Closed the file\n");
-        
+    
+    printf("Original Matrix\n");
     for(i = 0; i < number_of_nodes; i++){
         for(j = 0; j < number_of_nodes; j++){
             //printf("Final Data[%i][%i] value: %f\n", i, j, data[i][j]);
@@ -78,6 +85,7 @@ int main(int argc, char *argv[]){
         }
         printf("\n");
     }
+    printf("\n");
 
     // create Markov Matrix
     for(i = 0; i < number_of_nodes; i++){
@@ -98,22 +106,24 @@ int main(int argc, char *argv[]){
         }
         printf("\n");
     }
+    printf("\n");
     
-    // allocate data array to hold node connection data
+    // allocate data array to hold expanded array
     expanded_val = (float**)malloc(number_of_nodes * sizeof(float *));
     
     for(i = 0; i < number_of_nodes; i++){
         expanded_val[i] = (float *)malloc(number_of_nodes * sizeof(float));
     }
     
-    // allocate data array to hold node connection data
+    // allocate data array to hold inflated array
     inflated_val = (float**)malloc(number_of_nodes * sizeof(float *));
     
     for(i = 0; i < number_of_nodes; i++){
         inflated_val[i] = (float *)malloc(number_of_nodes * sizeof(float));
     }
-    printf("Dynamically alocatted all memory\n");
     
+    
+    ////////////////////////////    Perform Markov Clusteing    ////////////////////////////////////////
     // every processor performs these actions
     while(difference >= 0.0000001){
         // perform expansion and first step of inflation operations in same loop
@@ -126,7 +136,7 @@ int main(int argc, char *argv[]){
                 inflated_val[i][j] = pow(expanded_val[i][j], inflation_factor);
             }
         }
-        
+        /*
         printf("Expanded iteration\n");
         for(i = 0; i < number_of_nodes; i++){
             for(j = 0; j < number_of_nodes; j++){
@@ -134,7 +144,7 @@ int main(int argc, char *argv[]){
                 printf("%f ", expanded_val[i][j]);
             }
         printf("\n");
-        }
+        }*/
         
         
         //perform second step of inflation operation
@@ -159,6 +169,8 @@ int main(int argc, char *argv[]){
             }
         }
         
+        /*
+        // print next ieration matrix
         printf("Next iteration\n");
         for(i = 0; i < number_of_nodes; i++){
             for(j = 0; j < number_of_nodes; j++){
@@ -166,9 +178,10 @@ int main(int argc, char *argv[]){
                 printf("%f ", data[i][j]);
             }
         printf("\n");
-        }
+        }*/
     }
     
+    ////////////////////////////    Finalize Program    ////////////////////////////////////////
     printf("Final Array\n");
     for(i = 0; i < number_of_nodes; i++){
         for(j = 0; j < number_of_nodes; j++){
@@ -177,6 +190,7 @@ int main(int argc, char *argv[]){
         }
         printf("\n");
     }
+     printf("\n");
     
 
     for(i = 0; i < number_of_nodes; i++){
